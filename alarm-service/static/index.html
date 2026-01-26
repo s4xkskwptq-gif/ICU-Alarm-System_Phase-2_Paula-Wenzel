@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>ICU Prioritized Alarms Dashboard</title>
+  <style>
+    :root {
+      /* quick theming knobs */
+      --border: #e5e5e5;
+      --bg: #ffffff;
+      --muted: #666;
+      --soft: #f7f7f7;
+      --link: #0b57d0;
+      --danger: #b00020;
+      --warn: #8a5a00;
+      --ok: #0b6b2a;
+    }
+
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; margin: 20px; background: var(--bg); color: #111; }
+    h1 { margin-bottom: 0.25rem; }
+    .subtitle { color: var(--muted); margin-bottom: 1rem; }
+
+    .card {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      background: #fff;
+      margin-bottom: 12px;
+    }
+
+    .topbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .topbar .spacer { flex: 1; }
+    .small { font-size: 0.85rem; color: var(--muted); }
+    code { background: #f3f3f3; padding: 2px 6px; border-radius: 6px; }
+
+    .tabs { display: inline-flex; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+    .tab {
+      padding: 8px 10px;
+      cursor: pointer;
+      background: #fff;
+      border: 0;
+      font-size: 0.9rem;
+    }
+    .tab.active { background: var(--soft); font-weight: 600; }
+
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 10px;
+      align-items: end;
+    }
+    @media (max-width: 1100px) { .controls { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+    @media (max-width: 700px) { .controls { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+    label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 4px; }
+    select, input {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 0.9rem;
+      outline: none;
+    }
+    select:focus, input:focus { border-color: #b8c7ff; box-shadow: 0 0 0 3px rgba(11,87,208,0.12); }
+
+    button {
+      border: 1px solid var(--border);
+      background: #fff;
+      border-radius: 10px;
+      padding: 8px 10px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      white-space: nowrap;
+    }
+    button.primary { background: #0b57d0; color: #fff; border-color: #0b57d0; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .hint {
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-top: 8px;
+    }
+
+    table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+    th, td { border-bottom: 1px solid var(--border); padding: 10px 8px; font-size: 0.9rem; vertical-align: top; }
+    th { background: #fafafa; text-align: left; position: sticky; top: 0; z-index: 1; border-top: 1px solid var(--border); }
+
+    /* quick scan: prio colors */
+    tr.high { background: #fff1f1; }
+    tr.medium { background: #fff9ea; }
+    tr.low { background: #f1fff1; }
+
+    a { color: var(--link); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .pill {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      border: 1px solid var(--border);
+      background: #fafafa;
+      margin-right: 6px;
+      white-space: nowrap;
+      line-height: 1.2;
+    }
+    .pill.critical { background: #ffd6d6; border-color: #ffb3b3; }
+    .pill.warning  { background: #fff1cc; border-color: #ffe199; }
+    .pill.clinical { background: #e8f7e8; border-color: #c6ebc6; }
+    .pill.artifact { background: #e8f0ff; border-color: #c6d8ff; }
+    .pill.resolved { background: #eeeeee; border-color: #dddddd; }
+    .pill.acknowledged { background: #eaf1ff; border-color: #cfe0ff; }
+
+    .badge-error {
+      display: none;
+      /* red box -> show raw fetch errors fast */
+      background: #ffe9ec;
+      border: 1px solid #ffb8c2;
+      color: var(--danger);
+      padding: 10px 12px;
+      border-radius: 12px;
+      margin-top: 10px;
+      white-space: pre-wrap;
+    }
+
+    .footerbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+
+    /* modal -> quick "details" without leaving page */
+    .modal-backdrop {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.35);
+      padding: 30px;
+      z-index: 999;
+    }
+    .modal {
+      max-width: 900px;
+      margin: 0 auto;
+      background: #fff;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.12);
+      padding: 14px;
+    }
+    .modal-header {
+      display: flex; align-items: center; gap: 10px;
+      margin-bottom: 8px;
+    }
+    .modal-header .spacer { flex: 1; }
+    pre {
+      background: #0b1020;
+      color: #e8e8e8;
+      padding: 12px;
+      border-radius: 12px;
+      overflow: auto;
+      font-size: 0.85rem;
+      line-height: 1.35;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>ICU Prioritized Alarms</h1>
+  <div class="subtitle">Live view via Alarm Service API (Active + History)</div>
+
+  <div class="card topbar">
+    <div class="tabs" role="tablist" aria-label="Views">
+      <!-- active = current state -->
+      <button class="tab active" id="tabActive" type="button">Active</button>
+      <!-- history = audit trail -->
+      <button class="tab" id="tabHistory" type="button">History</button>
+    </div>
+
+    <span class="small">Auto-Refresh: <code id="autoRefreshLabel">5s</code></span>
+    <button id="toggleAutoBtn" type="button">Pause</button>
+
+    <span class="spacer"></span>
+    <span class="small" id="lastUpdated"></span>
+  </div>
+
+  <div class="card">
+    <div class="controls">
+      <div>
+        <label for="priority_level">Priority</label>
+        <select id="priority_level">
+          <option value="">(all)</option>
+          <option value="high">high</option>
+          <option value="medium">medium</option>
+          <option value="low">low</option>
+        </select>
+      </div>
+
+      <div>
+        <label for="ward">Ward</label>
+        <input id="ward" placeholder="e.g. ICU-1" />
+      </div>
+
+      <div>
+        <label for="alarm_type">Alarm Type</label>
+        <select id="alarm_type">
+          <option value="">(all)</option>
+          <option value="vitals">vitals</option>
+          <option value="ventilator">ventilator</option>
+          <option value="pump">pump</option>
+          <option value="medication">medication</option>
+          <option value="bed_exit">bed_exit</option>
+          <option value="bed_movement">bed_movement</option>
+          <option value="call_unanswered">call_unanswered</option>
+          <option value="pain">pain</option>
+        </select>
+      </div>
+
+      <div>
+        <label for="data_quality">Data Quality</label>
+        <select id="data_quality">
+          <option value="">(all)</option>
+          <option value="clinical">clinical</option>
+          <option value="artifact">artifact</option>
+        </select>
+      </div>
+
+      <div>
+        <label for="min_score">Min Score</label>
+        <input id="min_score" type="number" min="0" placeholder="e.g. 80" />
+      </div>
+
+      <div style="display:flex; gap:10px;">
+        <button id="reloadBtn" class="primary" type="button" style="flex:1;">Reload</button>
+        <button id="resetBtn" type="button" style="flex:1;">Reset</button>
+      </div>
+    </div>
+
+    <div class="hint">
+      <!-- active is UNIQUE(patient_id, alarm_type, data_quality) -->
+      <strong>Note:</strong> Active shows the latest state per
+      <code>(patient_id, alarm_type, data_quality)</code>.
+      <!-- clinical vs artifact separate on purpose -->
+      Clinical and artifact alarms are kept separately.
+      <!-- history for the full story -->
+      Use <strong>History</strong> to see the full audit trail over time.
+    </div>
+
+    <div class="badge-error" id="errorBox"></div>
+  </div>
+
+  <div class="card">
+    <table id="alerts-table">
+      <thead>
+        <tr>
+          <th style="width:70px;">ID</th>
+          <th>Patient</th>
+          <th style="width:130px;">Priority</th>
+          <th style="width:90px;">Score</th>
+          <th>Status</th>
+          <th style="width:180px;">Time</th>
+          <th style="width:210px;">Actions</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+
+    <div class="footerbar">
+      <span class="small" id="rowCount"></span>
+      <span class="spacer"></span>
+
+      <!-- history paging -->
+      <button id="prevBtn" type="button">Prev</button>
+      <button id="nextBtn" type="button">Next</button>
+      <span class="small">History offset: <code id="offsetLabel">0</code></span>
+    </div>
+  </div>
+
+  <!-- modal -->
+  <div class="modal-backdrop" id="modalBackdrop" role="dialog" aria-modal="true">
+    <div class="modal">
+      <div class="modal-header">
+        <strong id="modalTitle">Alert Details</strong>
+        <span class="spacer"></span>
+        <button id="closeModalBtn" type="button">Close</button>
+      </div>
+      <pre id="modalBody">{}</pre>
+    </div>
+  </div>
+
+  <script>
+    // state -> keep it simple
+    let view = "active"; // active | history
+    let autoRefresh = true;
+    let timer = null;
+
+    let historyOffset = 0;
+    const historyLimit = 50;
+
+    // tiny DOM helper
+    const $ = (id) => document.getElementById(id);
+
+    function showError(msg) {
+      // show raw errors -> faster debugging
+      const box = $("errorBox");
+      box.style.display = "block";
+      box.textContent = msg;
+    }
+    function clearError() {
+      const box = $("errorBox");
+      box.style.display = "none";
+      box.textContent = "";
+    }
+
+    function setTabs() {
+      // UI state mirrors "view"
+      $("tabActive").classList.toggle("active", view === "active");
+      $("tabHistory").classList.toggle("active", view === "history");
+
+      $("prevBtn").disabled = (view !== "history" || historyOffset === 0);
+      $("nextBtn").disabled = (view !== "history");
+
+      $("offsetLabel").textContent = String(historyOffset);
+    }
+
+    function qsFromFilters() {
+      // filters -> query params (FastAPI)
+      const params = new URLSearchParams();
+
+      const priority_level = $("priority_level").value.trim();
+      const ward = $("ward").value.trim();
+      const alarm_type = $("alarm_type").value.trim();
+      const data_quality = $("data_quality").value.trim();
+      const min_score_raw = $("min_score").value.trim();
+
+      if (priority_level) params.set("priority_level", priority_level);
+      if (ward) params.set("ward", ward);
+      if (alarm_type) params.set("alarm_type", alarm_type);
+      if (data_quality) params.set("data_quality", data_quality);
+      if (min_score_raw !== "") params.set("min_score", String(Number(min_score_raw)));
+
+      // active vs history -> different paging
+      if (view === "active") {
+        params.set("limit", "100");
+      } else {
+        params.set("limit", String(historyLimit));
+        params.set("offset", String(historyOffset));
+      }
+
+      return params.toString();
+    }
+
+    function timeForRow(alert) {
+      // prefer "alarm_timestamp" (pipeline), fallback chain
+      const v =
+        alert.alarm_timestamp ||
+        alert.updated_at ||
+        alert.created_at ||
+        alert.vital_timestamp ||
+        null;
+      if (!v) return "";
+      try { return new Date(v).toLocaleString(); } catch { return String(v); }
+    }
+
+    function pills(alert) {
+      // visual tags -> quick scan
+      const sev = (alert.severity || "").toLowerCase();
+      const dq  = (alert.data_quality || "").toLowerCase();
+      const type = (alert.alarm_type || "").toLowerCase();
+      const st = (alert.status || "").toLowerCase();
+
+      const parts = [];
+      if (type) parts.push(`<span class="pill">${type}</span>`);
+      if (sev)  parts.push(`<span class="pill ${sev}">${sev.toUpperCase()}</span>`);
+      if (dq)   parts.push(`<span class="pill ${dq}">${dq.toUpperCase()}</span>`);
+      if (st)   parts.push(`<span class="pill ${st}">${st.toUpperCase()}</span>`);
+      return parts.join("");
+    }
+
+    function rowClass(alert) {
+      // table row tint = priority
+      return (alert.priority_level || "").toLowerCase();
+    }
+
+    async function load() {
+      clearError();
+
+      const tbody = document.querySelector("#alerts-table tbody");
+      tbody.innerHTML = `<tr><td colspan="7">Loading...</td></tr>`;
+
+      const endpoint = view === "active" ? "/alerts/active" : "/alerts/history";
+      const url = `${endpoint}?${qsFromFilters()}`;
+
+      try {
+        const resp = await fetch(url);
+        if (!resp.ok) {
+          const text = await resp.text().catch(() => "");
+          throw new Error(`HTTP ${resp.status} ${resp.statusText}\n${text}`);
+        }
+
+        const data = await resp.json();
+
+        if (!Array.isArray(data) || data.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="7">No ${view} alerts</td></tr>`;
+          $("rowCount").textContent = "Rows: 0";
+          $("lastUpdated").textContent = `Last update: ${new Date().toLocaleTimeString()}`;
+          setTabs();
+          return;
+        }
+
+        tbody.innerHTML = "";
+        for (const alert of data) {
+          const tr = document.createElement("tr");
+          tr.className = rowClass(alert);
+
+          const patientLine = `
+            <strong>${alert.patient_id || "-"}</strong><br/>
+            <span class="small">${(alert.ward || "-")} / ${(alert.bed || "-")}</span>
+          `;
+
+          const prio = (alert.priority_level || "-").toUpperCase();
+          const score = (alert.priority_score ?? "");
+
+          // keep message visible but small (it can be long)
+          const msg = alert.message ? `<div class="small" style="margin-top:4px;color:#333;">${alert.message}</div>` : "";
+          const statusCell = `${pills(alert)}${msg}`;
+
+          // actions only on active view
+          const actions = view === "active"
+            ? `
+              <button type="button" data-action="details" data-id="${alert.id}">Details</button>
+              <button type="button" data-action="ack" data-id="${alert.id}" ${String(alert.status).toLowerCase()==="acknowledged" ? "disabled" : ""}>Ack</button>
+              <button type="button" data-action="resolve" data-id="${alert.id}" ${String(alert.status).toLowerCase()==="resolved" ? "disabled" : ""}>Resolve</button>
+            `
+            : `
+              <button type="button" data-action="details" data-id="${alert.id}">Details</button>
+            `;
+
+          tr.innerHTML = `
+            <td>${alert.id}</td>
+            <td>${patientLine}</td>
+            <td><strong>${prio}</strong></td>
+            <td>${score}</td>
+            <td>${statusCell}</td>
+            <td>${timeForRow(alert)}</td>
+            <td>${actions}</td>
+          `;
+
+          tbody.appendChild(tr);
+        }
+
+        $("rowCount").textContent = `Rows: ${data.length}`;
+        $("lastUpdated").textContent = `Last update: ${new Date().toLocaleTimeString()}`;
+        setTabs();
+
+      } catch (e) {
+        console.error(e);
+        showError(String(e));
+        tbody.innerHTML = `<tr><td colspan="7">Error loading data</td></tr>`;
+        $("rowCount").textContent = "";
+        setTabs();
+      }
+    }
+
+    function openModal(title, jsonObj) {
+      // cheap "details" UI
+      $("modalTitle").textContent = title;
+      $("modalBody").textContent = JSON.stringify(jsonObj, null, 2);
+      $("modalBackdrop").style.display = "block";
+    }
+    function closeModal() {
+      $("modalBackdrop").style.display = "none";
+    }
+
+    async function showDetails(id) {
+      clearError();
+      try {
+        // details endpoint only exists for ACTIVE -> fine, id comes from table anyway
+        const resp = await fetch(`/alerts/${id}`);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        openModal(`Alert #${id}`, data);
+      } catch (e) {
+        showError("Could not load details: " + e);
+      }
+    }
+
+    async function postAction(id, action) {
+      clearError();
+      try {
+        // ack/resolve -> POST to FastAPI
+        const resp = await fetch(`/alerts/${id}/${action}`, { method: "POST" });
+        if (!resp.ok) {
+          const text = await resp.text().catch(() => "");
+          throw new Error(`HTTP ${resp.status} ${resp.statusText}\n${text}`);
+        }
+        await load(); // refresh table
+      } catch (e) {
+        showError(`Could not ${action} alert #${id}: ` + e);
+      }
+    }
+
+    function startTimer() {
+      // auto-refresh every 5s -> good enough for demo
+      stopTimer();
+      if (!autoRefresh) return;
+      timer = setInterval(load, 5000);
+      $("autoRefreshLabel").textContent = "5s";
+      $("toggleAutoBtn").textContent = "Pause";
+    }
+    function stopTimer() {
+      if (timer) clearInterval(timer);
+      timer = null;
+      $("autoRefreshLabel").textContent = "off";
+      $("toggleAutoBtn").textContent = "Resume";
+    }
+
+    $("tabActive").addEventListener("click", () => {
+      view = "active";
+      historyOffset = 0;
+      setTabs();
+      load();
+    });
+
+    $("tabHistory").addEventListener("click", () => {
+      view = "history";
+      historyOffset = 0;
+      setTabs();
+      load();
+    });
+
+    $("reloadBtn").addEventListener("click", load);
+
+    $("resetBtn").addEventListener("click", () => {
+      // reset filters -> back to default view
+      $("priority_level").value = "";
+      $("ward").value = "";
+      $("alarm_type").value = "";
+      $("data_quality").value = "";
+      $("min_score").value = "";
+      historyOffset = 0;
+      load();
+    });
+
+    $("toggleAutoBtn").addEventListener("click", () => {
+      // pause/resume -> sometimes handy while clicking around
+      autoRefresh = !autoRefresh;
+      if (autoRefresh) startTimer();
+      else stopTimer();
+    });
+
+    $("prevBtn").addEventListener("click", () => {
+      if (view !== "history") return;
+      historyOffset = Math.max(0, historyOffset - historyLimit);
+      load();
+    });
+
+    $("nextBtn").addEventListener("click", () => {
+      if (view !== "history") return;
+      historyOffset = historyOffset + historyLimit;
+      load();
+    });
+
+    document.querySelector("#alerts-table tbody").addEventListener("click", (ev) => {
+      // event delegation -> less listeners
+      const btn = ev.target.closest("button[data-action]");
+      if (!btn) return;
+
+      const action = btn.getAttribute("data-action");
+      const id = btn.getAttribute("data-id");
+      if (!id) return;
+
+      if (action === "details") return showDetails(id);
+      if (action === "ack") return postAction(id, "ack");
+      if (action === "resolve") return postAction(id, "resolve");
+    });
+
+    $("closeModalBtn").addEventListener("click", closeModal);
+    $("modalBackdrop").addEventListener("click", (ev) => {
+      // click outside -> close
+      if (ev.target === $("modalBackdrop")) closeModal();
+    });
+
+    // small UX: auto load on select change
+    ["priority_level","alarm_type","data_quality"].forEach(id => {
+      $(id).addEventListener("change", () => { historyOffset = 0; load(); });
+    });
+
+    // inputs -> only reload on Enter (avoids spamming while typing)
+    ["ward","min_score"].forEach(id => {
+      $(id).addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { historyOffset = 0; load(); }
+      });
+    });
+
+    // init
+    setTabs();
+    load();
+    startTimer();
+  </script>
+</body>
+</html>

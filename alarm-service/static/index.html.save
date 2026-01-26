@@ -1,0 +1,89 @@
+<!DOCTYPE html> <html lang="en"> <head>
+  <meta charset="UTF-8" /> <title>ICU Prioritized Alarms Dashboard</title> <style>
+    body { font-family: sans-serif; margin: 20px; } h1 { margin-bottom: 0.2rem; } .subtitle { color: #555; 
+    margin-bottom: 1rem; } table { border-collapse: collapse; width: 100%; margin-top: 1rem; } th, td { border: 
+    1px solid #ddd; padding: 6px 8px; font-size: 0.9rem; } th { background: #f5f5f5; text-align: left; } tr.high { 
+    background: #ffe5e5; } tr.medium { background: #fff7e0; } tr.low { background: #e8f7e8; } button { padding: 
+    4px 8px; margin-right: 4px; cursor: pointer; } .status-badge { padding: 2px 6px; border-radius: 4px; 
+    font-size: 0.75rem; } .status-active { background: #ffcccc; } .status-acknowledged { background: #ffe4b3; } 
+    .status-resolved { background: #cce5ff; }
+  </style> </head> <body> <h1>ICU Prioritized Alarms</h1> <div class="subtitle">
+    Live-Ansicht der priorisierten Alarme (aus Alarm Service API)
+  </div>
+
+  <button onclick="loadActive()">Reload Active Alerts</button>
+
+  <table id="alerts-table">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Patient</th>
+        <th>Priority</th>
+        <th>Score</th>
+        <th>Status</th>
+        <th>Created</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      <!-- wird per JS gefüllt -->
+    </tbody>
+  </table>
+
+  <script>
+    async function loadActive() {
+      const tbody = document.querySelector("#alerts-table tbody");
+      tbody.innerHTML = "<tr><td colspan='7'>Loading...</td></tr>";
+
+      const resp = await fetch("/alerts/active");
+      const data = await resp.json();
+
+      if (!Array.isArray(data) || data.length === 0) {
+        tbody.innerHTML = "<tr><td colspan='7'>No active alerts</td></tr>";
+        return;
+      }
+
+      tbody.innerHTML = "";
+      for (const alert of data) {
+        const tr = document.createElement("tr");
+        tr.className = alert.priority || "";
+
+        const created = alert.created_at
+          ? new Date(alert.created_at).toLocaleString()
+          : "";
+
+        const statusClass = `status-badge status-${alert.status}`;
+
+        tr.innerHTML = `
+          <td>${alert.id}</td>
+          <td>${alert.patient_id}</td>
+          <td>${alert.priority}</td>
+          <td>${alert.score}</td>
+          <td><span class="${statusClass}">${alert.status}</span></td>
+          <td>${created}</td>
+          <td>
+            <button onclick="ack(${alert.id})">Ack</button>
+            <button onclick="resolveAlert(${alert.id})">Resolve</button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      }
+    }
+
+    async function ack(id) {
+      await fetch(`/alerts/${id}/ack`, { method: "POST" });
+      await loadActive();
+    }
+
+    async function resolveAlert(id) {
+      await fetch(`/alerts/${id}/resolve`, { method: "POST" });
+      await loadActive();
+    }
+
+    // beim Laden direkt einmal ziehen
+    loadActive();
+  </script>
+</body>
+</html>
+cd icu-alarm-system
+

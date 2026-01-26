@@ -1,0 +1,208 @@
+services:
+  # Kafka -> event backbone; decouples services -> no service-to-service calls -> easier to swap/extend steps
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: kafka
+    ports:
+      # localhost access -> validators / quick debugging
+      - "9092:9092"
+    environment:
+      # single-node demo
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: "broker,controller"
+
+      # listeners -> Docker internal + localhost -> containers use kafka:19092, local tools use localhost:9092
+      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:19092,PLAINTEXT_HOST://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:19092,PLAINTEXT_HOST://localhost:9092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT"
+
+      # KRaft -> no ZooKeeper -> less moving parts / fewer startup issues
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      KAFKA_CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+
+      # replication=1 -> demo only (no HA)
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+
+      # rebalance delay off -> faster start in demo
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+
+      # auto topics -> less manual setup for phase 2
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_DIRS: "/tmp/kraft-combined-logs"
+
+    # auto restart -> keeps demo running
+    restart: unless-stopped
+
+    # healthcheck -> avoid race conditions (downstream starts too early)
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+
+  alarm-generator:
+    # ingestion -> synthetic stream
+    build: ./alarm-generator
+    container_name: alarm-generator
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      # docker dns -> kafka:19092
+      KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+      KAFKA_TOPIC_RAW: raw_alarms
+
+      # fast run -> hit 1,000,000 datapoints requirement
+      GENERATOR_SLEEP_SEC: 0
+      GENERATOR_TOTAL_EVENTS: 1000000
+
+      # batch flush -> less overhead / still near-real-time
+      KAFKA_FLUSH_EVERY: 5000
+    restart: unless-stopped
+
+
+  raw-storage:
+    # proof layer -> store EVERY raw event -> easy COUNT(*) later
+    build: ./raw-storage
+    container_name: raw-storage
+    depends_on:
+      kafka:
+        condition: service_healthy
+      alarms-db:
+        condition: service_healthy
+    environment:
+      # logs in docker -> easier to follow
+      PYTHONUNBUFFERED: "1"
+
+      KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+      KAFKA_TOPIC_INPUT: raw_alarms
+
+      DB_HOST: alarms-db
+      DB_PORT: 5432
+      DB_NAME: icu_alarms
+      DB_USER: icu_user
+      DB_PASSWORD: icu_password
+
+      # separate table -> raw stays raw (no mixing with alarms)
+      DB_TABLE_RAW: icu_raw_events
+
+      # commit in chunks -> speed + not 1 transaction per event
+      DB_COMMIT_EVERY: 2000
+    restart: unless-stopped
+
+
+  alarm-processor:
+    # preprocessing -> validate + derive alarms + enrich
+    build: ./alarm-processor
+    container_name: alarm-processor
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+      KAFKA_TOPIC_INPUT: raw_alarms
+      KAFKA_TOPIC_ALERTS: enriched_alarms
+      KAFKA_FLUSH_EVERY: 10
+    restart: unless-stopped
+
+
+  priority-engine:
+    # context scoring -> metadata + dedup + priority levels
+    build: ./priority-engine
+    container_name: priority-engine
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+      KAFKA_TOPIC_INPUT: enriched_alarms
+      KAFKA_TOPIC_OUTPUT: prioritized_alarms
+      KAFKA_FLUSH_EVERY: 10
+    restart: unless-stopped
+
+
+  alarms-db:
+    # persistence -> ACTIVE + HISTORY
+    image: postgres:16-alpine
+    container_name: alarms-db
+    environment:
+      # demo creds -> ok for local only
+      POSTGRES_DB: icu_alarms
+      POSTGRES_USER: icu_user
+      POSTGRES_PASSWORD: icu_password
+    ports:
+      # localhost access -> psql / inspection
+      - "5432:5432"
+    volumes:
+      # keep state across restarts
+      - alarms-db-data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+    # db ready gate -> storage/service don't start too early
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U icu_user -d icu_alarms -h localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+
+  alarm-storage:
+    # kafka -> db (upsert ACTIVE + append HISTORY)
+    build: ./alarm-storage
+    container_name: alarm-storage
+    depends_on:
+      kafka:
+        condition: service_healthy
+      alarms-db:
+        condition: service_healthy
+    environment:
+      # logs in docker -> easier to follow
+      PYTHONUNBUFFERED: "1"
+
+      KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+      KAFKA_TOPIC_INPUT: prioritized_alarms
+
+      DB_HOST: alarms-db
+      DB_PORT: 5432
+      DB_NAME: icu_alarms
+      DB_USER: icu_user
+      DB_PASSWORD: icu_password
+
+      DB_TABLE_ACTIVE: icu_active_alarms
+      DB_TABLE_HISTORY: icu_alarm_history
+
+      # commit batches -> fewer transactions / more realistic
+      DB_COMMIT_EVERY: 10
+    restart: unless-stopped
+
+
+  alarm-service:
+    # delivery -> REST API + dashboard
+    build: ./alarm-service
+    container_name: alarm-service
+    depends_on:
+      alarms-db:
+        condition: service_healthy
+    environment:
+      - DB_HOST=alarms-db
+      - DB_PORT=5432
+      - DB_NAME=icu_alarms
+      - DB_USER=icu_user
+      - DB_PASSWORD=icu_password
+      - DB_TABLE_ACTIVE=icu_active_alarms
+      - DB_TABLE_HISTORY=icu_alarm_history
+    ports:
+      # entrypoint -> http://localhost:8000
+      - "8000:8000"
+    restart: unless-stopped
+
+
+volumes:
+  # postgres data -> persistent
+  alarms-db-data:
