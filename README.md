@@ -1,7 +1,7 @@
 # ICU-Alarm-System_Phase2_Paula-Wenzel
 Prototype demonstrating an ICU alarm pipeline with streaming, prioritization, and visualization.
 
-This repository contains a prototype built as part of **Portfolio Phase 2 – Data-Intensive Systems**. The project showcases the processing of **time-referenced streaming data** using a simulated ICU alarm use case.
+This repository contains a prototype built as part of Portfolio Phase 2 – Data-Intensive Systems. The project showcases the processing of time-referenced streaming data using a simulated ICU alarm use case.
 
 Synthetic ICU vital sign alarms (events) are generated, validated, enriched, and delivered in an event-driven microservice architecture. This is accomplished by using a prioritization algorithm. Apache Kafka serves 
 as the central event stream, so the microservices can be decoupled. This ensures a scalable, real-time processing. Alarm states are then stored in PostgreSQL, with active and historical alarm states separated to 
