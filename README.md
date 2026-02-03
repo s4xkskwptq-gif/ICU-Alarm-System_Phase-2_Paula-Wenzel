@@ -1,21 +1,23 @@
-# ICU-Alarm-System_Phase-2_Paula-Wenzel
+# ICU-Alarm-System_Phase2_Paula-Wenzel
 Prototype demonstrating an ICU alarm pipeline with streaming, prioritization, and visualization.
 
-This repository contains a prototype built as part of Portfolio Phase 2 – Data-Intensive Systems. The project showcases the processing of time-referenced streaming data using a simulated ICU alarm use case.
+This repository contains a prototype built as part of **Portfolio Phase 2 – Data-Intensive Systems**. The project showcases the processing of **time-referenced streaming data** using a simulated ICU alarm use case.
+
 Synthetic ICU vital sign alarms (events) are generated, validated, enriched, and delivered in an event-driven microservice architecture. This is accomplished by using a prioritization algorithm. Apache Kafka serves 
 as the central event stream, so the microservices can be decoupled. This ensures a scalable, real-time processing. Alarm states are then stored in PostgreSQL, with active and historical alarm states separated to 
 enable live monitoring and auditing. In the end a FastAPI service provides REST interfaces to manage and query alarms, while a simple web dashboard serves to visualize alarms in real time and show prioritized 
-alarms.
+alarms. 
 
-All data used in this project is fully synthetic. The system is not a medical system and is for educational and architectural demonstration purposes only. It does not imply a ready-for-use clinical or production 
+All data used in this project is fully synthetic. The system is not a medical system and is for educational and architectural demonstration purposes only. It does not imply a ready-for-use clinical or production
 medical system.
- 
+
+--------------------------------------------------
+
 ## Architecture
 
 **Core idea:** Kafka in the middle → services do not depend on each other directly.
 
 **Pipeline:**
-
 
 Alarm Generator
    → Validator Consumer 
@@ -26,14 +28,15 @@ Alarm Generator
                   → Raw & Alarm Storage
                      → Alarm Service
 
+Kafka topics act as explicit interfaces between each processing stage.
 
-**Main components:**
+
+## Main components
 
 * **Kafka (KRaft mode)** – central event backbone
 * **PostgreSQL** – persistence (ACTIVE + HISTORY tables)
 * **FastAPI** – delivery layer (REST API + dashboard)
 * **Docker Compose** – reproducible local deployment
-
 
 
 ## Services & Responsibilities
@@ -48,6 +51,42 @@ Alarm Generator
 | Delivery                     | `alarm-service`                   | REST API + web dashboard                           |
 
 
+## Why this design?
+Design decisions made to demonstrate data-intensive, event-driven system principles (educational prototype, 
+not clinical completeness).
+
+**Event-driven streaming (Kafka)**
+→ Decoupling of producers and consumers
+→ Asynchronous, real-time processing
+→ Independent scaling and fault isolation
+→ Industry-standard pattern for streaming architectures
+
+**Microservice separation**
+→ One responsibility per service
+→ Clear pipeline stages (generate → validate → enrich → prioritize → store → serve)
+→ Easier maintenance, testing, and replacement of components
+→ No direct service-to-service coupling
+
+**Explicit schema enforcement (Pydantic)**
+→ Contract checks at multiple pipeline boundaries
+→ Early failure instead of silent schema drift
+→ Improved debuggability in distributed systems
+
+**ACTIVE vs. HISTORY data model**
+→ ACTIVE: upsert-based current state per (patient_id, alarm_type, data_quality)
+→ HISTORY: append-only audit trail
+→ Real-time operational view vs. retrospective analysis
+
+**Explicit data quality propagation**
+→ Clinical vs. artifact alarms handled separately
+→ Prevents sensor glitches from masking clinical alarms
+→ Direct mitigation of alarm fatigue
+
+**Rule-based prioritization**
+→ Deterministic, transparent decision logic
+→ Easy to validate and reason about
+→ ML intentionally out of scope, but replaceable by
+
 
 ## Data Storage Design
 
@@ -59,7 +98,6 @@ Alarm Generator
 Clinical and artifact alarms are stored **separately** to avoid suppressing clinical alarms with technical artifacts.
 
 
-
 ## Running the System
 
 ### Prerequisites
@@ -69,7 +107,6 @@ Docker Desktop
 ### Start
 
 docker compose up --build
-
 
 ### Access
 
@@ -87,7 +124,6 @@ Once all containers are running:
 The dashboard is served directly by the FastAPI service inside Docker.
 
 
-
 ## Kafka Topics
 
 | Topic                | Purpose                          |
@@ -97,7 +133,6 @@ The dashboard is served directly by the FastAPI service inside Docker.
 | `prioritized_alarms` | Context-aware prioritized alarms |
 
 Topics are auto-created to keep setup simple.
-
 
 
 ## API Endpoints (Selection)
@@ -113,7 +148,6 @@ Topics are auto-created to keep setup simple.
 Filtering by priority, ward, alarm type, score and data quality is supported.
 
 
-
 ## Reliability, Scalability & Maintainability
 
 * Kafka decouples producers and consumers
@@ -124,6 +158,9 @@ Filtering by priority, ward, alarm type, score and data quality is supported.
 * Environment variables for configuration
 * Clear service boundaries and schemas
 
+The system supports both:
+ * Realistic low-throughput operation
+ * High-throughput stress-test mode (e.g. ≥1 million events) via configuration, without code changes.
 
 
 ## Security, Governance & Data Protection
@@ -133,3 +170,9 @@ Filtering by priority, ward, alarm type, score and data quality is supported.
 * Dedicated database user
 * Minimal privileges (demo scope)
 * No credentials committed outside Docker context
+
+
+## Status
+
+This repository is fully executable via Docker Compose, reproducible on any machine with Docker installed, 
+and designed to clearly demonstrate data-intensive, event-driven system design.
